@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>Flappy Bird</title>
+<style>
+    * { margin: 0; padding: 0; box-sizing: border-box; font-family: 'Arial Rounded MT Bold', Arial; }
+  body { background: #70c5ce; display: flex; justify-content: center; align-items: center; height: 100vh; overflow: hidden; }
+  canvas { display: block; border: 2px solid #000; max-width: 100%; max-height: 100vh; }
+  #loginScreen, #leaderboard { position: absolute; width: 90%; max-width: 350px; background: #ded895; padding: 20px; border: 3px solid #543847; border-radius: 10px; text-align: center; z-index: 20; }
+  #loginScreen input { width: 85%; padding: 12px; margin: 8px 0; border: 2px solid #543847; border-radius: 5px; font-size: 16px; }
+  #loginScreen button,.btn { padding: 12px 25px; background: #e86101; color: white; border: 2px solid #543847; border-radius: 5px; font-size: 16px; cursor: pointer; margin: 5px; font-weight: bold; }
+  #leaderboard { display: none; }
+  #lbBtn { position: absolute; top: 10px; right: 10px; z-index: 10; }
+  #logoutBtn { position: absolute; top: 10px; left: 10px; z-index: 10; }
+  #soundBtn { position: absolute; top: 10px; left: 50%; transform: translateX(-50%); z-index: 10; }
+  #score { position: absolute; top: 55px; left: 50%; transform: translateX(-50%); font-size: 50px; color: white; text-shadow: 3px 3px 0 #000; z-index: 10; font-weight: bold; }
+  #playerName { position: absolute; bottom: 10px; left: 10px; color: white; text-shadow: 2px 2px 0 #000; z-index: 10; font-size: 14px; }
+  h2,h3 { color: #543847; margin-bottom: 15px; }
+  #lbList p { margin: 8px 0; font-size: 16px; color: #543847; }
+</style>
+</head>
+<body>
+<div id="loginScreen">
+  <h2>FLAPPY BIRD</h2>
+  <input id="username" placeholder="Nama Kamu" maxlength="12">
+  <input id="password" type="password" placeholder="Password">
+  <br><button onclick="login()">MASUK / DAFTAR</button>
+  <p style="font-size:11px;margin-top:10px;color:#543847">*Akun kesimpen di HP ini aja</p>
+</div>
+<div id="score">0</div>
+<div id="playerName"></div>
+<button id="lbBtn" class="btn" onclick="showLeaderboard()" style="display:none">SKOR</button>
+<button id="logoutBtn" class="btn" onclick="logout()" style="display:none">GANTI</button>
+<button id="soundBtn" class="btn" onclick="toggleSound()" style="display:none">🔊 ON</button>
+<div id="leaderboard">
+  <h3>TOP SKOR</h3>
+  <div id="lbList"></div>
+  <button class="btn" onclick="hideLeaderboard()">TUTUP</button>
+</div>
+<canvas id="canvas" width="400" height="600"></canvas>
+<script>
+const canvas = document.getElementById('canvas');
+const ctx = canvas.getContext('2d');
+let gameStarted = false, gameOver = false, user = null, frame = 0, score = 0;
+let soundOn = localStorage.getItem('flappySound')!== 'false';
+let audioCtx;
+function initAudio() { if (!audioCtx) audioCtx = new(window.AudioContext || window.webkitAudioContext)(); }
+function playSound(type) {
+  if (!soundOn) return; initAudio();
+  const osc = audioCtx.createOscillator(), gain = audioCtx.createGain();
+  osc.connect(gain); gain.connect(audioCtx.destination);
+  if (type === 'flap') { osc.frequency.value = 600; gain.gain.setValueAtTime(0.1, audioCtx.currentTime); gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.1); osc.start(); osc.stop(audioCtx.currentTime + 0.1); }
+  else if (type === 'score') { osc.frequency.value = 800; gain.gain.setValueAtTime(0.2, audioCtx.currentTime); gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.15); osc.start(); osc.stop(audioCtx.currentTime + 0.15); }
+  else if (type === 'hit') { osc.frequency.value = 150; osc.type = 'sawtooth'; gain.gain.setValueAtTime(0.3, audioCtx.currentTime); gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.3); osc.start(); osc.stop(audioCtx.currentTime + 0.3); }
+}
+function toggleSound() { soundOn =!soundOn; document.getElementById('soundBtn').innerText = soundOn? '🔊 ON' : '🔇 OFF'; localStorage.setItem('flappySound', soundOn); }
+function resizeCanvas() { let scale = Math.min(window.innerWidth / 400, window.innerHeight / 600); canvas.style.width = (400 * scale) + 'px'; canvas.style.height = (600 * scale) + 'px'; }
+window.addEventListener('resize', resizeCanvas); resizeCanvas();
+let clouds = [{x: 50, y: 100, s: 0.3}, {x: 200, y: 80, s: 0.4}, {x: 320, y: 120, s: 0.2}];
+let bird = {x: 80, y: 300, w: 34, h: 24, velocity: 0, gravity: 0.5, lift: -8, frame: 0, rotation: 0};
+let pipes = [], pipeGap = 150, pipeWidth = 52;
+function login() {
+  const u = document.getElementById('username').value.trim(), p = document.getElementById('password').value.trim();
+  if (!u ||!p) return alert('Nama dan password wajib diisi!');
+  if (u.length < 3) return alert('Nama minimal 3 huruf ya');
+  let users = JSON.parse(localStorage.getItem('flappyUsers') || '{}');
+  if (users[u] && users[u].pass!== p) return alert('Password salah!');
+  if (!users[u]) { users[u] = { pass: p, highScore: 0 }; localStorage.setItem('flappyUsers', JSON.stringify(users)); }
+  localStorage.setItem('currentFlappyUser', u);
+  user = { name: u, highScore: users[u].highScore }; startGameUI();
+}
+function logout() { localStorage.removeItem('currentFlappyUser'); location.reload(); }
+window.onload = () => {
+  const u = localStorage.getItem('currentFlappyUser');
+  if (u) { const users = JSON.parse(localStorage.getItem('flappyUsers') || '{}'); if (users[u]) { user = { name: u, highScore: users[u].highScore }; startGameUI(); } }
+  document.getElementById('soundBtn').innerText = soundOn? '🔊 ON' : '🔇 OFF';
+}
+function startGameUI() {
+  document.getElementById('loginScreen').style.display = 'none';
+  document.getElementById('lbBtn').style.display = 'block';
+  document.getElementById('logoutBtn').style.display = 'block';
+  document.getElementById('soundBtn').style.display = 'block';
+  document.getElementById('playerName').innerText = 'Player: ' + user.name;
+  resetGame();
+}
+function resetGame() { bird.y = 300; bird.velocity = 0; bird.rotation = 0; pipes = []; score = 0; frame = 0; gameOver = false; document.getElementById('score').innerText = '0'; if (!gameStarted) drawStart(); }
+function drawStart() {
+  drawBackground(); drawBird();
+  ctx.fillStyle = 'white'; ctx.font = 'bold 22px Arial'; ctx.textAlign = 'center'; ctx.strokeStyle = '#000'; ctx.lineWidth = 4;
+  ctx.strokeText('TAP UNTUK MULAI', canvas.width/2, 300); ctx.fillText('TAP UNTUK MULAI', canvas.width/2, 300);
+  ctx.font = 'bold 16px Arial'; ctx.strokeText(`Hi ${user.name}! Best: ${user.highScore}`, canvas.width/2, 330); ctx.fillText(`Hi ${user.name}! Best: ${user.highScore}`, canvas.width/2, 330);
+}
+function drawBackground() {
+  ctx.fillStyle = '#70c5ce'; ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.fillStyle = '#FFD700'; ctx.beginPath(); ctx.arc(330, 80, 35, 0, Math.PI * 2); ctx.fill();
+  ctx.strokeStyle = '#FFD700'; ctx.lineWidth = 3;
+  for(let i = 0; i < 8; i++) { let angle = (i * Math.PI / 4); ctx.beginPath(); ctx.moveTo(330 + Math.cos(angle) * 40, 80 + Math.sin(angle) * 40); ctx.lineTo(330 + Math.cos(angle) * 50, 80 + Math.sin(angle) * 50); ctx.stroke(); }
+  ctx.fillStyle = 'rgba(255,255,255,0.9)'; clouds.forEach(c => { ctx.beginPath(); ctx.arc(c.x, c.y, 22, 0, Math.PI * 2); ctx.arc(c.x+28, c.y, 28, 0, Math.PI * 2); ctx.arc(c.x+55, c.y, 22, 0, Math.PI * 2); ctx.fill(); c.x -= c.s; if (c.x < -80) c.x = 480; });
+  ctx.fillStyle = '#5aa600'; ctx.fillRect(0, 520, canvas.width, 80);
+  ctx.strokeStyle = '#4a8f00'; ctx.lineWidth = 2; for(let i = 0; i < canvas.width; i += 15) { ctx.beginPath(); ctx.moveTo(i, 520); ctx.lineTo(i + 5, 515); ctx.stroke(); }
+  ctx.fillStyle = '#8B4513'; ctx.fillRect(25, 440, 25, 80); ctx.fillStyle = '#228B22'; ctx.beginPath(); ctx.arc(37, 430, 45, 0, Math.PI * 2); ctx.fill(); ctx.beginPath(); ctx.arc(15, 445, 35, 0, Math.PI * 2); ctx.fill(); ctx.beginPath(); ctx.arc(60, 445, 35, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = '#8B4513'; ctx.fillRect(350, 440, 25, 80); ctx.fillStyle = '#228B22'; ctx.beginPath(); ctx.arc(362, 430, 45, 0, Math.PI * 2); ctx.fill(); ctx.beginPath(); ctx.arc(340, 445, 35, 0, Math.PI * 2); ctx.fill(); ctx.beginPath(); ctx.arc(385, 445, 35, 0, Math.PI * 2); ctx.fill();
+}
+function drawBird() {
+  ctx.save(); ctx.translate(bird.x, bird.y); bird.rotation = Math.min(Math.max(bird.velocity * 0.04
